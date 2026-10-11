@@ -135,7 +135,7 @@ def main():
 
         stable_rows = []
         for threshold in TEST_THRESHOLDS:
-            for seed in SEEDS:
+            for seed in STRESS_SEEDS:
                 stable_rows.append({
                     "seed": seed,
                     "threshold": threshold,
