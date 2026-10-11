@@ -97,6 +97,23 @@ def run_noisy_probe_phase(agent, count, changed_dynamics, seed, noise_rate):
     }
 
 
+
+def evaluate_stable_world_noise(trained_agent, seed, threshold, count, noise_rate):
+    """Measure false change detections when the true mechanic never changes."""
+    agent = copy.deepcopy(trained_agent)
+    agent.change_point_threshold = threshold
+    initial_events = len(agent.change_point_events)
+    result = run_noisy_probe_phase(
+        agent, count=count, changed_dynamics=False,
+        seed=seed + 12000, noise_rate=noise_rate
+    )
+    result["false_change_points"] = len(agent.change_point_events) - initial_events
+    result["final_prediction"] = agent.predict_next_state(
+        "x3y3:EMPTY:uOdOlBrB", "DOWN"
+    )
+    return result
+
+
 def evaluate_threshold(trained_agent, seed, threshold, noise_rate=0.0):
     agent = copy.deepcopy(trained_agent)
     agent.change_point_threshold = threshold
@@ -186,6 +203,31 @@ def main():
         row["changed"]["corruption_rate_observed"] for row in noisy_rows
     )
     print(f"Actual sampled corruption rate in changed phase: {pct(observed_noise)}")
+    print()
+
+    stable_rows = []
+    stable_count = PROBE_COUNT * 2
+    for threshold in THRESHOLDS:
+        for seed in SEEDS:
+            result = evaluate_stable_world_noise(
+                trained[seed], seed, threshold, stable_count, NOISE_RATE
+            )
+            stable_rows.append({
+                "threshold": threshold,
+                "seed": seed,
+                "accuracy": result["prediction_accuracy_when_known"],
+                "first_correct": result["first_correct_probe"],
+                "false_change_points": result["false_change_points"],
+                "corruption_rate": result["corruption_rate_observed"],
+            })
+    print(f"STABLE WORLD WITH {NOISE_RATE:.0%} NOISY OBSERVATIONS (no real mechanic change)")
+    print(f"{'threshold':>9} {'accuracy':>10} {'false changes':>14} {'actual noise':>13}")
+    for threshold in THRESHOLDS:
+        subset = [row for row in stable_rows if row["threshold"] == threshold]
+        accuracy = mean_or_none(row["accuracy"] for row in subset)
+        false_changes = mean_or_none(row["false_change_points"] for row in subset)
+        sampled_noise = mean_or_none(row["corruption_rate"] for row in subset)
+        print(f"{threshold:>9} {pct(accuracy):>10} {false_changes:>14.1f} {pct(sampled_noise):>13}")
     print()
     print("Interpretation:")
     print("- The noisy phase corrupts feedback to the learner, but scores predictions against the true environment outcome.")
