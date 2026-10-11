@@ -66,11 +66,11 @@ def chunk_success(results, chunk_size=5):
     ]
 
 
-def run_mechanic_probe(agent, count, learn, seed=9001):
-    """Force the same state/action through the changed tile to test its dynamics."""
+def run_mechanic_probe(agent, count, learn, seed=9001, changed_dynamics=True):
+    """Force the same state/action through the special tile to test its dynamics."""
     results = []
     for i in range(count):
-        env = TinyWorld(seed=seed + i, changed_dynamics=True)
+        env = TinyWorld(seed=seed + i, changed_dynamics=changed_dynamics)
         env.episode_index = seed + i
         obs = env.reset(start_position=(3, 3))
         state = env.encode_observation(obs)
@@ -129,6 +129,13 @@ def run_transfer_study(base_agent, args):
     )
     zero_probe_summary = probe_summary(zero_shot_probe)
     adapt_probe_summary = probe_summary(probe_adaptation)
+
+    # Reverse the mechanic again on the same probe learner to measure recovery.
+    recovery_probe = run_mechanic_probe(
+        probe_adaptation_agent, count=args.probe_episodes, learn=True,
+        seed=args.seed + 8000, changed_dynamics=False
+    )
+    recovery_probe_summary = probe_summary(recovery_probe)
     print("Targeted mechanic probe (frozen): "
           f"predicted={zero_probe_summary['initial_prediction']} | "
           f"actual={zero_probe_summary['actual_next_state']} | "
@@ -136,6 +143,10 @@ def run_transfer_study(base_agent, args):
     print("Targeted mechanic probe (learning): "
           f"accuracy when prediction known={adapt_probe_summary['prediction_accuracy_when_known']} | "
           f"first correct probe={adapt_probe_summary['first_correct_probe']}")
+    print("Mechanic recovery probe (back to original): "
+          f"accuracy when prediction known={recovery_probe_summary['prediction_accuracy_when_known']} | "
+          f"first correct probe={recovery_probe_summary['first_correct_probe']} | "
+          f"change points={len(probe_adaptation_agent.change_point_events)}")
 
     # Same initial RNG seed makes the two episode-level runs more comparable.
     # The trajectories may still diverge because the adapted model changes.
@@ -164,6 +175,9 @@ def run_transfer_study(base_agent, args):
         "targeted_mechanic_probe": {
             "zero_shot": zero_probe_summary,
             "adaptation": adapt_probe_summary,
+            "recovery_to_original": recovery_probe_summary,
+            "change_point_events": list(probe_adaptation_agent.change_point_events),
+            "historical_transition_observations": probe_adaptation_agent.transition_observations,
         },
         "zero_shot": {"success_rate": success_rate(zero_shot),
                       "mean_steps": sum(x["steps"] for x in zero_shot) / len(zero_shot),
@@ -238,6 +252,8 @@ def main():
         print("\n=== Transfer study summary ===")
         print(f"Targeted probe first prediction: {ts['targeted_mechanic_probe']['zero_shot']['initial_prediction']}")
         print(f"Targeted probe actual outcome:   {ts['targeted_mechanic_probe']['zero_shot']['actual_next_state']}")
+        print(f"Recovery to original mechanic:  {ts['targeted_mechanic_probe']['recovery_to_original']['prediction_accuracy_when_known']:.1%} accuracy when known")
+        print(f"Change points detected:         {len(ts['targeted_mechanic_probe']['change_point_events'])}")
         print(f"Zero-shot transfer: {ts['zero_shot']['success_rate']:.1%}")
         print(f"Adaptation overall: {ts['adaptation']['success_rate']:.1%}")
         print(f"Retention:          {ts['retention']['success_rate']:.1%}")
