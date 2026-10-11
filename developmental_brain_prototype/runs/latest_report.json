@@ -1,0 +1,68 @@
+{
+  "success_rate": 0.9875,
+  "last_20_success_rate": 1.0,
+  "mean_steps": 31.1625,
+  "prediction_accuracy": 1.0,
+  "stored_memories": 80,
+  "transition_observations": 2493,
+  "unique_state_action_pairs": 150,
+  "unique_states": 30,
+  "configuration": {
+    "episodes": 80,
+    "max_steps": 100,
+    "seed": 7,
+    "reset": true,
+    "transfer": true,
+    "transfer_episodes": 20,
+    "retention_episodes": 20,
+    "state_file": "data/brain_state.json",
+    "adapted_state_file": "data/transfer_adapted_brain_state.json",
+    "report_file": "runs/latest_report.json"
+  },
+  "training_episodes_this_run": 80,
+  "note": "Toy experiment only; not a general intelligence benchmark.",
+  "transfer_study": {
+    "protocol": "zero-shot frozen evaluation -> online adaptation -> frozen retention",
+    "zero_shot": {
+      "success_rate": 1.0,
+      "mean_steps": 29.75,
+      "prediction_accuracy": 0.934453781512605,
+      "episodes": 20
+    },
+    "adaptation": {
+      "success_rate": 0.45,
+      "mean_steps": 66.35,
+      "prediction_accuracy": 0.9683496608892238,
+      "episodes": 20,
+      "chunks": [
+        {
+          "episodes": "1-5",
+          "success_rate": 0.6,
+          "mean_steps": 52.4
+        },
+        {
+          "episodes": "6-10",
+          "success_rate": 0.0,
+          "mean_steps": 100.0
+        },
+        {
+          "episodes": "11-15",
+          "success_rate": 0.2,
+          "mean_steps": 85.8
+        },
+        {
+          "episodes": "16-20",
+          "success_rate": 1.0,
+          "mean_steps": 27.2
+        }
+      ]
+    },
+    "retention": {
+      "success_rate": 1.0,
+      "mean_steps": 25.9,
+      "prediction_accuracy": 0.9594594594594594,
+      "episodes": 20
+    },
+    "adapted_state_file": "data\\transfer_adapted_brain_state.json"
+  }
+}
