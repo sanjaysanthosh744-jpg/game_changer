@@ -66,22 +66,87 @@ def chunk_success(results, chunk_size=5):
     ]
 
 
+def run_mechanic_probe(agent, count, learn, seed=9001):
+    """Force the same state/action through the changed tile to test its dynamics."""
+    results = []
+    for i in range(count):
+        env = TinyWorld(seed=seed + i, changed_dynamics=True)
+        env.episode_index = seed + i
+        obs = env.reset(start_position=(3, 3))
+        state = env.encode_observation(obs)
+        action = "DOWN"
+        prediction = agent.predict_next_state(state, action)
+        next_obs, reward, done, info = env.step(action)
+        next_state = env.encode_observation(next_obs)
+        known_prediction = prediction is not None
+        correct = known_prediction and prediction == next_state
+        results.append({
+            "probe": i + 1,
+            "prediction": prediction,
+            "actual_next_state": next_state,
+            "prediction_known": known_prediction,
+            "prediction_correct": bool(correct),
+            "event": info.get("event"),
+        })
+        if learn:
+            agent.observe(state, action, next_state, prediction, env.episode_index,
+                          0, reward, info)
+            agent.end_episode()
+    return results
+
+
+def probe_summary(results):
+    known = [r for r in results if r["prediction_known"]]
+    first_correct = next((r["probe"] for r in results if r["prediction_correct"]), None)
+    return {
+        "probes": len(results),
+        "known_predictions": len(known),
+        "prediction_accuracy_when_known": (
+            sum(r["prediction_correct"] for r in known) / len(known) if known else None
+        ),
+        "first_correct_probe": first_correct,
+        "initial_prediction": results[0]["prediction"] if results else None,
+        "actual_next_state": results[0]["actual_next_state"] if results else None,
+        "final_prediction": results[-1]["prediction"] if results else None,
+        "event": results[0]["event"] if results else None,
+        "results": results,
+    }
+
+
 def run_transfer_study(base_agent, args):
-    """Measure zero-shot transfer, online adaptation, then retention."""
+    """Measure ordinary transfer and a targeted probe of the changed mechanic."""
     print("\n=== Transfer study ===")
-    # Stage 1: no updates in the changed world. This is the zero-shot baseline.
+
+    # Ordinary goal success can hide transfer failure when the changed tile is avoided.
+    # Probe a separate copy directly so the diagnostic cannot leak into episode scores.
+    probe_agent = copy.deepcopy(base_agent)
+    zero_shot_probe = run_mechanic_probe(probe_agent, count=1, learn=False,
+                                         seed=args.seed + 4000)
+    probe_adaptation_agent = copy.deepcopy(base_agent)
+    probe_adaptation = run_mechanic_probe(
+        probe_adaptation_agent, count=args.probe_episodes, learn=True,
+        seed=args.seed + 4000
+    )
+    zero_probe_summary = probe_summary(zero_shot_probe)
+    adapt_probe_summary = probe_summary(probe_adaptation)
+    print("Targeted mechanic probe (frozen): "
+          f"predicted={zero_probe_summary['initial_prediction']} | "
+          f"actual={zero_probe_summary['actual_next_state']} | "
+          f"correct={zero_probe_summary['results'][0]['prediction_correct']}")
+    print("Targeted mechanic probe (learning): "
+          f"accuracy when prediction known={adapt_probe_summary['prediction_accuracy_when_known']} | "
+          f"first correct probe={adapt_probe_summary['first_correct_probe']}")
+
+    # Same initial RNG seed makes the two episode-level runs more comparable.
+    # The trajectories may still diverge because the adapted model changes.
     zero_shot_agent = copy.deepcopy(base_agent)
     zero_shot = run_batch(zero_shot_agent, True, args.episodes, args.transfer_episodes,
                           args.max_steps, args.seed + 1000, learn=False,
                           label="Zero-shot transfer (frozen model)")
-
-    # Stage 2: a separate copy adapts online in the changed world.
     adapted_agent = copy.deepcopy(base_agent)
     adaptation = run_batch(adapted_agent, True, args.episodes, args.transfer_episodes,
-                           args.max_steps, args.seed + 2000, learn=True,
+                           args.max_steps, args.seed + 1000, learn=True,
                            label="Adaptation (learning enabled)")
-
-    # Stage 3: freeze the adapted model and return to the original world.
     retention = run_batch(adapted_agent, False, args.episodes + args.transfer_episodes,
                           args.retention_episodes, args.max_steps, args.seed + 3000,
                           learn=False, label="Retention (original world, frozen model)")
@@ -90,7 +155,16 @@ def run_transfer_study(base_agent, args):
     adapted_agent.save(adapted_path)
     print(f"Adapted brain saved: {adapted_path}")
     return {
-        "protocol": "zero-shot frozen evaluation -> online adaptation -> frozen retention",
+        "protocol": "frozen zero-shot evaluation -> online adaptation -> frozen retention",
+        "important_caveat": (
+            "The ordinary goal-reaching score may not exercise the changed mechanic. "
+            "The targeted probe forces the same state/action through the changed tile. "
+            "Probe adaptation is diagnostic and is kept separate from the episode adaptation agent."
+        ),
+        "targeted_mechanic_probe": {
+            "zero_shot": zero_probe_summary,
+            "adaptation": adapt_probe_summary,
+        },
         "zero_shot": {"success_rate": success_rate(zero_shot),
                       "mean_steps": sum(x["steps"] for x in zero_shot) / len(zero_shot),
                       "prediction_accuracy": _prediction_accuracy(zero_shot),
@@ -120,17 +194,19 @@ def main():
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--reset", action="store_true")
     parser.add_argument("--transfer", action="store_true",
-                        help="run zero-shot transfer, adaptation, and retention study")
+                        help="run transfer, targeted mechanic probe, adaptation, and retention study")
     parser.add_argument("--transfer-episodes", type=int, default=20,
                         help="number of changed-world episodes for zero-shot and adaptation")
     parser.add_argument("--retention-episodes", type=int, default=20,
                         help="number of original-world episodes for retention test")
+    parser.add_argument("--probe-episodes", type=int, default=30,
+                        help="number of forced observations used only in the targeted mechanic diagnostic")
     parser.add_argument("--state-file", default="data/brain_state.json")
     parser.add_argument("--adapted-state-file", default="data/transfer_adapted_brain_state.json")
     parser.add_argument("--report-file", default="runs/latest_report.json")
     args = parser.parse_args()
-    if args.episodes < 1 or args.transfer_episodes < 1 or args.retention_episodes < 1:
-        parser.error("episode counts must all be at least 1")
+    if min(args.episodes, args.transfer_episodes, args.retention_episodes, args.probe_episodes) < 1:
+        parser.error("episode and probe counts must all be at least 1")
 
     rng = random.Random(args.seed)
     state_path = Path(args.state_file)
@@ -150,7 +226,6 @@ def main():
                   f"mean steps={sum(x['steps'] for x in recent)/len(recent):.1f} | "
                   f"memories={len(agent.episodes)} | transitions={agent.transition_observations}")
 
-    # Save the original-world model before the separate transfer experiments.
     agent.save(state_path)
     report = summarize(training, agent)
     report["configuration"] = vars(args)
@@ -161,6 +236,8 @@ def main():
         report["transfer_study"] = run_transfer_study(agent, args)
         ts = report["transfer_study"]
         print("\n=== Transfer study summary ===")
+        print(f"Targeted probe first prediction: {ts['targeted_mechanic_probe']['zero_shot']['initial_prediction']}")
+        print(f"Targeted probe actual outcome:   {ts['targeted_mechanic_probe']['zero_shot']['actual_next_state']}")
         print(f"Zero-shot transfer: {ts['zero_shot']['success_rate']:.1%}")
         print(f"Adaptation overall: {ts['adaptation']['success_rate']:.1%}")
         print(f"Retention:          {ts['retention']['success_rate']:.1%}")
@@ -179,6 +256,7 @@ def main():
     print(f"Transition samples:    {report['transition_observations']}")
     print(f"Saved brain:           {state_path}")
     print(f"Saved report:          {report_path}")
+
 
 if __name__ == "__main__":
     main()
