@@ -11,7 +11,6 @@ import copy
 
 from run_change_point_sweep import (
     PROBE_COUNT,
-    SEEDS,
     mean_or_none,
     pct,
     run_noisy_probe_phase,
@@ -20,6 +19,7 @@ from run_change_point_sweep import (
 
 # Avoid the extreme no-change baseline here; this experiment compares usable
 # detection thresholds. Keep these settings modest enough for a local run.
+STRESS_SEEDS = tuple(7 + 10 * i for i in range(20))
 TEST_THRESHOLDS = (2, 3, 5)
 NOISE_RATES = (0.0, 0.05, 0.10, 0.20)
 PHASES = (
@@ -111,9 +111,9 @@ def print_stable_table(rows, noise_rate):
 
 
 def main():
-    trained = {seed: train_original_world(seed) for seed in SEEDS}
+    trained = {seed: train_original_world(seed) for seed in STRESS_SEEDS}
     print("Repeated change-point stress test")
-    print(f"Seeds: {', '.join(map(str, SEEDS))}")
+    print(f"Seeds: {', '.join(map(str, STRESS_SEEDS))}")
     print(f"Thresholds: {', '.join(map(str, TEST_THRESHOLDS))}")
     print(f"Noise rates: {', '.join(pct(rate) for rate in NOISE_RATES)}")
     print(f"Repeated-switch phases: {len(PHASES)} x {PROBE_COUNT} probes")
@@ -122,7 +122,7 @@ def main():
     for noise_rate in NOISE_RATES:
         switch_rows = []
         for threshold in TEST_THRESHOLDS:
-            for seed in SEEDS:
+            for seed in STRESS_SEEDS:
                 for phase in run_repeated_switches(
                     trained[seed], seed, threshold, noise_rate
                 ):
