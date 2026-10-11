@@ -66,6 +66,14 @@ Run tests:
 python -m unittest discover -s tests -v
 ```
 
+Run the multi-seed change-point threshold sweep:
+
+```bash
+python run_change_point_sweep.py
+```
+
+The sweep trains on the original world using five fixed seeds, then compares thresholds 2, 3, 5, and a very high threshold (a no-change-detection comparison). Each run probes the changed mechanic and then probes recovery after the original mechanic returns. It reports adaptation/recovery accuracy and the average probe number of the first correct prediction. This controlled benchmark isolates one state/action transition; it does not measure generalization across states.
+
 ## What it learns
 
 The toy world is a small grid with walls, a goal, and a hidden tile mechanic. The agent isn't told the mechanic's rule. It observes state, acts, observes the result, and updates a transition model.
