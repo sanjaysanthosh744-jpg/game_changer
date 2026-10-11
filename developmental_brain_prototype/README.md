@@ -35,8 +35,15 @@ The transfer study reports:
 2. **Online adaptation:** a separate copy learns while acting in the changed world.
 3. **Retention:** the adapted episode agent returns to the original world with learning frozen.
 4. **Targeted mechanic probe:** the agent is placed immediately above the special tile and forced to move DOWN. This directly tests the transition that differs between the original conveyor mechanic and changed reversal mechanic. A separate copy is used for repeated probe adaptation, so this diagnostic does not leak training into the episode-level adaptation score.
+5. **Change-point adaptation and recovery:** after repeated contradictory outcomes, the active transition model can switch to the new outcome. The same probe learner is then tested after the world returns to the original mechanic.
 
 The targeted probe matters because an agent can reach the goal while avoiding the changed mechanic. Goal success alone does not prove that the changed rule was encountered or learned.
+
+The change-point experiment keeps two kinds of evidence:
+- **Historical transition counts:** retained as long-term memory and never erased by a detected change.
+- **Active transition counts:** used for current predictions and reset for a state/action pair after three consecutive observations contradict the same prediction.
+
+This is a deliberately simple change detector, not a statistically calibrated detector. The threshold is configurable when constructing the agent. It can react to real changes, but repeated noise can also trigger a false change; use repeated seeds and noisy environments before drawing broad conclusions.
 
 Options:
 - `--transfer-episodes 20`: episode count for zero-shot and online adaptation.
@@ -96,7 +103,8 @@ The targeted probe is a controlled diagnostic of one changed transition, not evi
 
 1. Run with `--reset` several times and compare prediction accuracy.
 2. Change the hidden mechanic behavior in `brain/environment.py`.
-3. Use `--transfer` to compare goal-reaching, a controlled mechanic probe, adaptation, and retention separately.
+3. Use `--transfer` to compare goal-reaching, a controlled mechanic probe, adaptation, recovery after the mechanic reverts, and retention separately.
+4. Compare the baseline branch with `experiment/change-point-detection` across multiple fixed seeds.
 4. Change exploration weights in `brain/agent.py`.
 5. Add memory limits/consolidation.
 6. Replace the transition table with a learned neural predictor only after this baseline is measurable.
