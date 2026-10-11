@@ -72,7 +72,7 @@ Run the multi-seed change-point threshold sweep:
 python run_change_point_sweep.py
 ```
 
-The sweep trains on the original world using five fixed seeds, then compares thresholds 2, 3, 5, and a very high threshold (a no-change-detection comparison). Each run probes the changed mechanic and then probes recovery after the original mechanic returns. It reports adaptation/recovery accuracy and the average probe number of the first correct prediction. This controlled benchmark isolates one state/action transition; it does not measure generalization across states.
+The sweep trains on the original world using five fixed seeds, then compares thresholds 2, 3, 5, and a very high threshold (a no-change-detection comparison). It reports clean-observation results and a second run with a 10% chance of feedback being flipped to the other mechanic's outcome. In the noisy run, scores compare predictions with the true environment outcome while the learner receives the possibly corrupted observation. Each run probes the changed mechanic and then probes recovery after the original mechanic returns. This controlled benchmark isolates one state/action transition; it does not measure generalization across states.
 
 ## What it learns
 
@@ -113,6 +113,7 @@ The targeted probe is a controlled diagnostic of one changed transition, not evi
 2. Change the hidden mechanic behavior in `brain/environment.py`.
 3. Use `--transfer` to compare goal-reaching, a controlled mechanic probe, adaptation, recovery after the mechanic reverts, and retention separately.
 4. Compare the baseline branch with `experiment/change-point-detection` across multiple fixed seeds.
-4. Change exploration weights in `brain/agent.py`.
-5. Add memory limits/consolidation.
-6. Replace the transition table with a learned neural predictor only after this baseline is measurable.
+5. Test change-detection thresholds under noisy observations.
+6. Change exploration weights in `brain/agent.py`.
+7. Add memory limits/consolidation.
+8. Replace the transition table with a learned neural predictor only after this baseline is measurable.
