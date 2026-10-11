@@ -62,6 +62,14 @@ class TransferEvaluationTests(unittest.TestCase):
         )
 
 
+
+    def test_single_contradiction_does_not_trigger_change_point(self):
+        agent = DevelopmentalAgent(change_point_threshold=3)
+        agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
+        agent.observe("state", "DOWN", "new", "old", 1, 0, 0.0, {"event": "noise"})
+        self.assertEqual(agent.predict_next_state("state", "DOWN"), "old")
+        self.assertEqual(len(agent.change_point_events), 0)
+
     def test_change_point_switches_active_model_but_preserves_history(self):
         agent = DevelopmentalAgent(change_point_threshold=3)
         agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
