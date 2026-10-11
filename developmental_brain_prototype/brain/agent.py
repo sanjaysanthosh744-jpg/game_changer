@@ -89,8 +89,9 @@ class DevelopmentalAgent:
             self.contradiction_streaks.pop(key, None)
             return
 
-        current_prediction = max(active.items(), key=lambda kv: (kv[1], kv[0]))[0]
         # Count only a consistent run of outcomes that contradict the same active prediction.
+        # Keep the active model unchanged until the threshold is reached, so one noisy
+        # outcome cannot shift a tie or majority before the detector has enough evidence.
         if prediction is not None and next_state != prediction:
             previous = self.contradiction_streaks.get(key)
             if (previous and previous["predicted"] == prediction
@@ -101,7 +102,6 @@ class DevelopmentalAgent:
             self.contradiction_streaks[key] = {
                 "predicted": prediction, "observed": next_state, "count": streak
             }
-            active[next_state] += 1
             if streak >= self.change_point_threshold:
                 old_outcomes = dict(active)
                 self.active_transition_counts[key] = defaultdict(int, {next_state: 1})
