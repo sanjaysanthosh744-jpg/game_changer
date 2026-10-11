@@ -17,6 +17,7 @@ from main import probe_summary, run_episode, run_mechanic_probe
 SEEDS = (7, 17, 27, 37, 47)
 TRAIN_EPISODES = 80
 PROBE_COUNT = 30
+NOISE_RATE = 0.10
 # A very high threshold approximates a no-change-detection baseline.
 THRESHOLDS = (2, 3, 5, 10_000)
 
@@ -31,7 +32,72 @@ def train_original_world(seed):
     return agent
 
 
-def evaluate_threshold(trained_agent, seed, threshold):
+def run_noisy_probe_phase(agent, count, changed_dynamics, seed, noise_rate):
+    """Probe one fixed transition while occasionally corrupting the observed outcome.
+
+    Evaluation compares predictions with the true environment outcome. Learning receives
+    the possibly corrupted outcome, separating model quality from observation quality.
+    """
+    rng = random.Random(seed)
+    results = []
+    for i in range(count):
+        env = TinyWorld(seed=seed + i, changed_dynamics=changed_dynamics)
+        env.episode_index = seed + i
+        obs = env.reset(start_position=(3, 3))
+        state = env.encode_observation(obs)
+        action = "DOWN"
+        prediction = agent.predict_next_state(state, action)
+
+        true_next_obs, reward, _, info = env.step(action)
+        true_next_state = env.encode_observation(true_next_obs)
+
+        alternate_env = TinyWorld(
+            seed=seed + i, changed_dynamics=not changed_dynamics
+        )
+        alternate_env.reset(start_position=(3, 3))
+        alternate_next_obs, _, _, _ = alternate_env.step(action)
+        alternate_state = alternate_env.encode_observation(alternate_next_obs)
+
+        corrupted = rng.random() < noise_rate
+        observed_next_state = alternate_state if corrupted else true_next_state
+        known = prediction is not None
+        correct = bool(known and prediction == true_next_state)
+        results.append({
+            "probe": i + 1,
+            "prediction": prediction,
+            "actual_next_state": true_next_state,
+            "observed_next_state": observed_next_state,
+            "prediction_known": known,
+            "prediction_correct": correct,
+            "observation_corrupted": corrupted,
+        })
+        agent.observe(
+            state, action, observed_next_state, prediction,
+            env.episode_index, 0, reward, info
+        )
+        agent.end_episode()
+
+    known_results = [row for row in results if row["prediction_known"]]
+    first_correct = next(
+        (row["probe"] for row in results if row["prediction_correct"]), None
+    )
+    return {
+        "probes": len(results),
+        "known_predictions": len(known_results),
+        "prediction_accuracy_when_known": (
+            sum(row["prediction_correct"] for row in known_results) / len(known_results)
+            if known_results else None
+        ),
+        "first_correct_probe": first_correct,
+        "corruption_rate_observed": (
+            sum(row["observation_corrupted"] for row in results) / len(results)
+            if results else None
+        ),
+        "results": results,
+    }
+
+
+def evaluate_threshold(trained_agent, seed, threshold, noise_rate=0.0):
     agent = copy.deepcopy(trained_agent)
     agent.change_point_threshold = threshold
 
@@ -39,21 +105,30 @@ def evaluate_threshold(trained_agent, seed, threshold):
         copy.deepcopy(agent), count=1, learn=False,
         seed=seed + 4000, changed_dynamics=True
     )
-    changed = run_mechanic_probe(
-        agent, count=PROBE_COUNT, learn=True,
-        seed=seed + 4000, changed_dynamics=True
-    )
-    recovery = run_mechanic_probe(
-        agent, count=PROBE_COUNT, learn=True,
-        seed=seed + 8000, changed_dynamics=False
-    )
+    if noise_rate:
+        changed = run_noisy_probe_phase(
+            agent, PROBE_COUNT, True, seed + 4000, noise_rate
+        )
+        recovery = run_noisy_probe_phase(
+            agent, PROBE_COUNT, False, seed + 8000, noise_rate
+        )
+    else:
+        changed = probe_summary(run_mechanic_probe(
+            agent, count=PROBE_COUNT, learn=True,
+            seed=seed + 4000, changed_dynamics=True
+        ))
+        recovery = probe_summary(run_mechanic_probe(
+            agent, count=PROBE_COUNT, learn=True,
+            seed=seed + 8000, changed_dynamics=False
+        ))
     return {
         "seed": seed,
         "threshold": threshold,
+        "noise_rate": noise_rate,
         "initial_prediction_known": frozen_probe[0]["prediction"] is not None,
         "initial_prediction_correct": frozen_probe[0]["prediction"] == frozen_probe[0]["actual_next_state"],
-        "changed": probe_summary(changed),
-        "recovery": probe_summary(recovery),
+        "changed": changed,
+        "recovery": recovery,
         "change_points": len(agent.change_point_events),
         "history_preserved": bool(agent.transition_counts),
     }
@@ -68,40 +143,57 @@ def pct(value):
     return "n/a" if value is None else f"{value:.1%}"
 
 
-def main():
-    all_results = []
-    trained = {seed: train_original_world(seed) for seed in SEEDS}
-
-    print("Change-point sweep")
-    print(f"Training: {TRAIN_EPISODES} original-world episodes per seed")
-    print(f"Probe phases: {PROBE_COUNT} changed-mechanic probes, then {PROBE_COUNT} original-mechanic recovery probes")
-    print(f"Seeds: {', '.join(map(str, SEEDS))}")
-    print()
+def print_table(rows, heading):
+    print(heading)
     print(f"{'threshold':>9} {'known':>7} {'changed acc':>12} {'first correct':>14} "
           f"{'recovery acc':>13} {'recovery first':>15} {'change points':>14}")
-
     for threshold in THRESHOLDS:
-        rows = [evaluate_threshold(trained[seed], seed, threshold) for seed in SEEDS]
-        all_results.extend(rows)
-        known = sum(row["initial_prediction_known"] for row in rows)
-        changed_acc = mean_or_none(row["changed"]["prediction_accuracy_when_known"] for row in rows)
-        changed_first = mean_or_none(row["changed"]["first_correct_probe"] for row in rows)
-        recovery_acc = mean_or_none(row["recovery"]["prediction_accuracy_when_known"] for row in rows)
-        recovery_first = mean_or_none(row["recovery"]["first_correct_probe"] for row in rows)
-        change_points = mean_or_none(row["change_points"] for row in rows)
-        print(f"{threshold:>9} {known:>4}/{len(rows):<2} {pct(changed_acc):>12} "
+        subset = [row for row in rows if row["threshold"] == threshold]
+        known = sum(row["initial_prediction_known"] for row in subset)
+        changed_acc = mean_or_none(row["changed"]["prediction_accuracy_when_known"] for row in subset)
+        changed_first = mean_or_none(row["changed"]["first_correct_probe"] for row in subset)
+        recovery_acc = mean_or_none(row["recovery"]["prediction_accuracy_when_known"] for row in subset)
+        recovery_first = mean_or_none(row["recovery"]["first_correct_probe"] for row in subset)
+        change_points = mean_or_none(row["change_points"] for row in subset)
+        print(f"{threshold:>9} {known:>4}/{len(subset):<2} {pct(changed_acc):>12} "
               f"{('n/a' if changed_first is None else f'{changed_first:.1f}'):>14} "
               f"{pct(recovery_acc):>13} "
               f"{('n/a' if recovery_first is None else f'{recovery_first:.1f}'):>15} "
               f"{change_points:>14.1f}")
 
+
+def main():
+    trained = {seed: train_original_world(seed) for seed in SEEDS}
+    print("Change-point sweep")
+    print(f"Training: {TRAIN_EPISODES} original-world episodes per seed")
+    print(f"Probe phases: {PROBE_COUNT} changed-mechanic probes, then {PROBE_COUNT} original-mechanic recovery probes")
+    print(f"Seeds: {', '.join(map(str, SEEDS))}")
+    print()
+
+    clean_rows = [
+        evaluate_threshold(trained[seed], seed, threshold, noise_rate=0.0)
+        for threshold in THRESHOLDS for seed in SEEDS
+    ]
+    print_table(clean_rows, "CLEAN OBSERVATIONS")
+    print()
+
+    noisy_rows = [
+        evaluate_threshold(trained[seed], seed, threshold, noise_rate=NOISE_RATE)
+        for threshold in THRESHOLDS for seed in SEEDS
+    ]
+    print_table(noisy_rows, f"NOISY OBSERVATIONS ({NOISE_RATE:.0%} chance of a flipped outcome observation)")
+    observed_noise = mean_or_none(
+        row["changed"]["corruption_rate_observed"] for row in noisy_rows
+    )
+    print(f"Actual sampled corruption rate in changed phase: {pct(observed_noise)}")
     print()
     print("Interpretation:")
-    print("- Lower thresholds adapt faster but may react to noisy observations.")
+    print("- The noisy phase corrupts feedback to the learner, but scores predictions against the true environment outcome.")
+    print("- Lower thresholds adapt faster in clean conditions, but may mistake repeated noise for a real change.")
     print("- The very high threshold is a no-change-detection comparison.")
     print("- Accuracy is averaged per seed over predictions that were known; unknown predictions are not counted as correct.")
     print("- These results measure one forced state/action transition, not broad generalization or goal-reaching.")
-    print("- Historical counts are kept by design; this script does not treat retained counts alone as proof of useful memory.")
+    print("- Historical counts are retained, but that alone does not establish useful memory.")
 
 
 if __name__ == "__main__":
