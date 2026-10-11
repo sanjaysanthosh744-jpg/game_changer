@@ -7,16 +7,11 @@ Tests repeated original/changed mechanic switches and long stable periods under
 several observation-noise rates. This is a narrow transition-level experiment,
 not a general-intelligence benchmark.
 """
-import statistics
+import copy
 
-from brain.agent import DevelopmentalAgent
-from main import run_episode
-from brain.environment import TinyWorld
 from run_change_point_sweep import (
     PROBE_COUNT,
     SEEDS,
-    THRESHOLDS,
-    TRAIN_EPISODES,
     mean_or_none,
     pct,
     run_noisy_probe_phase,
@@ -37,7 +32,7 @@ STABLE_PROBES = 500
 
 
 def run_repeated_switches(trained_agent, seed, threshold, noise_rate):
-    agent = __import__("copy").deepcopy(trained_agent)
+    agent = copy.deepcopy(trained_agent)
     agent.change_point_threshold = threshold
     rows = []
     for phase_index, (phase_name, changed_dynamics) in enumerate(PHASES):
@@ -61,8 +56,6 @@ def run_repeated_switches(trained_agent, seed, threshold, noise_rate):
 
 
 def run_stable_noise(trained_agent, seed, threshold, noise_rate):
-    import copy
-
     agent = copy.deepcopy(trained_agent)
     agent.change_point_threshold = threshold
     before_events = len(agent.change_point_events)
