@@ -61,6 +61,47 @@ class TransferEvaluationTests(unittest.TestCase):
             env_new.encode_observation(next_new)
         )
 
+
+    def test_change_point_switches_active_model_but_preserves_history(self):
+        agent = DevelopmentalAgent(change_point_threshold=3)
+        agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
+        for i in range(3):
+            agent.observe("state", "DOWN", "new", "old", 1, i, 0.0, {"event": "changed"})
+        self.assertEqual(agent.predict_next_state("state", "DOWN"), "new")
+        key = agent._key("state", "DOWN")
+        self.assertEqual(agent.transition_counts[key]["old"], 1)
+        self.assertEqual(agent.transition_counts[key]["new"], 3)
+        self.assertEqual(dict(agent.active_transition_counts[key]), {"new": 1})
+        self.assertEqual(len(agent.change_point_events), 1)
+
+    def test_model_recovers_when_original_mechanic_returns(self):
+        agent = DevelopmentalAgent(change_point_threshold=3)
+        agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
+        for i in range(3):
+            agent.observe("state", "DOWN", "new", "old", 1, i, 0.0, {"event": "changed"})
+        for i in range(3):
+            agent.observe("state", "DOWN", "old", "new", 2, i, 0.0, {"event": "reverted"})
+        self.assertEqual(agent.predict_next_state("state", "DOWN"), "old")
+        key = agent._key("state", "DOWN")
+        self.assertEqual(agent.transition_counts[key]["old"], 4)
+        self.assertEqual(agent.transition_counts[key]["new"], 3)
+        self.assertEqual(len(agent.change_point_events), 2)
+
+    def test_active_model_and_history_survive_persistence(self):
+        agent = DevelopmentalAgent()
+        agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
+        for i in range(3):
+            agent.observe("state", "DOWN", "new", "old", 1, i, 0.0, {"event": "changed"})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent.json"
+            agent.save(path)
+            loaded = DevelopmentalAgent.load(path)
+        self.assertEqual(loaded.predict_next_state("state", "DOWN"), "new")
+        key = loaded._key("state", "DOWN")
+        self.assertEqual(loaded.transition_counts[key]["old"], 1)
+        self.assertEqual(loaded.transition_counts[key]["new"], 3)
+        self.assertEqual(len(loaded.change_point_events), 1)
+
     def test_probe_adaptation_records_transitions(self):
         agent = DevelopmentalAgent()
         before = agent.transition_observations
