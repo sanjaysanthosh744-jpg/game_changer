@@ -5,13 +5,24 @@ from pathlib import Path
 
 class DevelopmentalAgent:
     # Transparent table-based baseline. It is intentionally not an LLM or neural network.
-    def __init__(self, memory_limit=5000, change_point_threshold=3):
+    def __init__(self, memory_limit=5000, change_point_threshold=3, change_detector="consecutive", cusum_threshold=5.0, cusum_stable_contradiction_probability=0.25, cusum_changed_contradiction_probability=0.80):
+        if change_detector not in {"consecutive", "cusum"}:
+            raise ValueError("change_detector must be 'consecutive' or 'cusum'")
+        if not 0 < cusum_stable_contradiction_probability < 1 or not 0 < cusum_changed_contradiction_probability < 1:
+            raise ValueError("CUSUM probabilities must be between 0 and 1")
+        if cusum_stable_contradiction_probability == cusum_changed_contradiction_probability:
+            raise ValueError("CUSUM probabilities must differ")
         # Historical counts are retained as long-term evidence.
         self.transition_counts = defaultdict(lambda: defaultdict(int))
         # Active counts drive predictions and can be reset when a mechanic changes.
         self.active_transition_counts = defaultdict(lambda: defaultdict(int))
         self.contradiction_streaks = {}
         self.change_point_threshold = max(2, int(change_point_threshold))
+        self.change_detector = change_detector
+        self.cusum_threshold = max(0.1, float(cusum_threshold))
+        self.cusum_stable_contradiction_probability = float(cusum_stable_contradiction_probability)
+        self.cusum_changed_contradiction_probability = float(cusum_changed_contradiction_probability)
+        self.cusum_scores = {}
         self.change_point_events = []
         self.state_visits = defaultdict(int)
         self.action_visits = defaultdict(int)
@@ -82,11 +93,40 @@ class DevelopmentalAgent:
         best = max(scores.values())
         return rng.choice([a for a, score in scores.items() if abs(score - best) < 1e-12])
 
+    def _record_change_point(self, key, prediction, next_state, active, evidence, contradictions):
+        old_outcomes = dict(active)
+        self.active_transition_counts[key] = defaultdict(int, {next_state: 1})
+        self.change_point_events.append({
+            "key": key, "previous_prediction": prediction, "new_prediction": next_state,
+            "contradictions": contradictions, "previous_active_counts": old_outcomes,
+            "detector": self.change_detector, "evidence_score": evidence,
+        })
+        self.change_point_events = self.change_point_events[-100:]
+        self.contradiction_streaks.pop(key, None)
+        self.cusum_scores.pop(key, None)
+
     def _update_active_model(self, key, state, action, next_state, prediction):
         active = self.active_transition_counts[key]
         if not active:
             active[next_state] += 1
             self.contradiction_streaks.pop(key, None)
+            return
+
+        contradiction = prediction is not None and next_state != prediction
+        if self.change_detector == "cusum":
+            # Log-likelihood CUSUM: contradiction evidence accumulates; matches erode it.
+            # These probabilities are explicit experimental assumptions, not calibrated truths.
+            p0 = self.cusum_stable_contradiction_probability
+            p1 = self.cusum_changed_contradiction_probability
+            score = self.cusum_scores.get(key, 0.0)
+            score += math.log(p1 / p0) if contradiction else math.log((1 - p1) / (1 - p0))
+            score = max(0.0, score)
+            self.cusum_scores[key] = score
+            if score >= self.cusum_threshold:
+                self._record_change_point(key, prediction, next_state, active, score, None)
+                return
+            if not contradiction:
+                active[next_state] += 1
             return
 
         # Count only a consistent run of outcomes that contradict the same active prediction.
@@ -103,18 +143,7 @@ class DevelopmentalAgent:
                 "predicted": prediction, "observed": next_state, "count": streak
             }
             if streak >= self.change_point_threshold:
-                old_outcomes = dict(active)
-                self.active_transition_counts[key] = defaultdict(int, {next_state: 1})
-                self.change_point_events.append({
-                    "key": key,
-                    "previous_prediction": prediction,
-                    "new_prediction": next_state,
-                    "contradictions": streak,
-                    "previous_active_counts": old_outcomes,
-                })
-                # Keep the event log bounded; historical transition counts remain complete.
-                self.change_point_events = self.change_point_events[-100:]
-                self.contradiction_streaks.pop(key, None)
+                self._record_change_point(key, prediction, next_state, active, None, streak)
             return
 
         # A matching observation breaks the consecutive contradiction streak.
@@ -156,6 +185,11 @@ class DevelopmentalAgent:
             "active_transition_counts": {k: dict(v) for k, v in self.active_transition_counts.items()},
             "contradiction_streaks": self.contradiction_streaks,
             "change_point_threshold": self.change_point_threshold,
+            "change_detector": self.change_detector,
+            "cusum_threshold": self.cusum_threshold,
+            "cusum_stable_contradiction_probability": self.cusum_stable_contradiction_probability,
+            "cusum_changed_contradiction_probability": self.cusum_changed_contradiction_probability,
+            "cusum_scores": self.cusum_scores,
             "change_point_events": self.change_point_events,
             "state_visits": dict(self.state_visits),
             "action_visits": dict(self.action_visits),
@@ -180,7 +214,13 @@ class DevelopmentalAgent:
         if not path.exists():
             return cls()
         payload = json.loads(path.read_text(encoding="utf-8"))
-        agent = cls(change_point_threshold=payload.get("change_point_threshold", 3))
+        agent = cls(
+            change_point_threshold=payload.get("change_point_threshold", 3),
+            change_detector=payload.get("change_detector", "consecutive"),
+            cusum_threshold=payload.get("cusum_threshold", 5.0),
+            cusum_stable_contradiction_probability=payload.get("cusum_stable_contradiction_probability", 0.25),
+            cusum_changed_contradiction_probability=payload.get("cusum_changed_contradiction_probability", 0.80),
+        )
         agent.transition_counts = defaultdict(lambda: defaultdict(int))
         for key, outcomes in payload.get("transition_counts", {}).items():
             agent.transition_counts[key] = defaultdict(int, outcomes)
@@ -194,6 +234,7 @@ class DevelopmentalAgent:
             agent.active_transition_counts[key] = defaultdict(int, outcomes)
 
         agent.contradiction_streaks = payload.get("contradiction_streaks", {})
+        agent.cusum_scores = payload.get("cusum_scores", {})
         agent.change_point_events = payload.get("change_point_events", [])
         agent.state_visits = defaultdict(int, payload.get("state_visits", {}))
         agent.action_visits = defaultdict(int, payload.get("action_visits", {}))
