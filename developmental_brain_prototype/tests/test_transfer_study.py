@@ -110,6 +110,40 @@ class TransferEvaluationTests(unittest.TestCase):
         self.assertEqual(loaded.transition_counts[key]["new"], 3)
         self.assertEqual(len(loaded.change_point_events), 1)
 
+    def test_cusum_requires_accumulated_evidence_and_matches_reduce_it(self):
+        agent = DevelopmentalAgent(change_detector="cusum", cusum_threshold=3.5)
+        agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
+        # Two contradictions create evidence, but a matching outcome reduces it.
+        agent.observe("state", "DOWN", "new", "old", 1, 0, 0.0, {"event": "changed"})
+        agent.observe("state", "DOWN", "new", "old", 1, 1, 0.0, {"event": "changed"})
+        score_before_match = agent.cusum_scores[agent._key("state", "DOWN")]
+        agent.observe("state", "DOWN", "old", "old", 1, 2, 0.0, {"event": "match"})
+        score_after_match = agent.cusum_scores[agent._key("state", "DOWN")]
+        self.assertLess(score_after_match, score_before_match)
+        self.assertEqual(len(agent.change_point_events), 0)
+        for i in range(3):
+            prediction = agent.predict_next_state("state", "DOWN")
+            agent.observe("state", "DOWN", "new", prediction, 2, i, 0.0, {"event": "changed"})
+        self.assertEqual(agent.predict_next_state("state", "DOWN"), "new")
+        self.assertEqual(len(agent.change_point_events), 1)
+        self.assertEqual(agent.change_point_events[0]["detector"], "cusum")
+
+    def test_cusum_state_survives_persistence(self):
+        agent = DevelopmentalAgent(change_detector="cusum", cusum_threshold=5.0)
+        agent.observe("state", "DOWN", "old", None, 0, 0, 0.0, {"event": "move"})
+        agent.observe("state", "DOWN", "new", "old", 1, 0, 0.0, {"event": "changed"})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent.json"
+            agent.save(path)
+            loaded = DevelopmentalAgent.load(path)
+        self.assertEqual(loaded.change_detector, "cusum")
+        self.assertEqual(loaded.cusum_threshold, 5.0)
+        self.assertEqual(
+            loaded.cusum_scores[agent._key("state", "DOWN")],
+            agent.cusum_scores[agent._key("state", "DOWN")]
+        )
+        self.assertEqual(loaded.transition_counts[agent._key("state", "DOWN")]["new"], 1)
+
     def test_probe_adaptation_records_transitions(self):
         agent = DevelopmentalAgent()
         before = agent.transition_observations
