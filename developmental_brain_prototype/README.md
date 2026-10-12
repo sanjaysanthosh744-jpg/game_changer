@@ -86,6 +86,19 @@ Compare the default consecutive-contradiction detector with an optional sequenti
 python run_detector_comparison.py
 ```
 
+Initial CI result snapshot (20 seeds, 80 training episodes per seed, 30 probes per mechanic phase, 500 stable-world probes per seed):
+
+| Noise | Detector | Mean per-phase accuracy | Mean first-correct probe | Stable-world false changes per seed |
+|---|---|---:|---:|---:|
+| 0% | Consecutive threshold 3 | 90.0% | 4.0 | 0.00 |
+| 0% | CUSUM threshold 5.0 | 83.3% | 6.0 | 0.00 |
+| 10% | Consecutive threshold 3 | 88.1% | 4.6 | 0.80 |
+| 10% | CUSUM threshold 5.0 | 80.3% | 6.9 | 0.00 |
+| 20% | Consecutive threshold 3 | 83.8% | 5.2 | 6.10 |
+| 20% | CUSUM threshold 5.0 | 76.7% | 7.9 | 0.45 |
+
+Interpretation: the current CUSUM settings reduce false alarms substantially at high noise, but adapt more slowly and score lower on average when switching mechanics. This is a tradeoff, not a universal win; keep consecutive threshold 3 as the default and treat CUSUM as an optional experiment. The next useful stress test is temporally correlated/bursty noise, because the current benchmark flips each observation independently.
+
 The CUSUM detector accumulates log-likelihood evidence from contradictions and reduces that evidence when an observation matches the active model. The comparison evaluates 20 fixed seeds, four observation-noise rates, repeated mechanic switches, and long stable periods. It compares the default consecutive threshold of 3 with CUSUM thresholds 3.5, 5.0, and 6.5. CUSUM's stable/changed contradiction probabilities (0.25 and 0.80) are explicit assumptions, not calibrated probabilities. The default detector remains consecutive; CUSUM is experimental until results justify changing that default.
 
 ## What it learns
