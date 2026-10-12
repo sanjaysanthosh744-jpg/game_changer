@@ -74,6 +74,20 @@ python run_change_point_sweep.py
 
 The sweep trains on the original world using five fixed seeds, then compares thresholds 2, 3, 5, and a very high threshold (a no-change-detection comparison). It reports clean-observation results and a second run with a 10% chance of feedback being flipped to the other mechanic's outcome. In the noisy run, scores compare predictions with the true environment outcome while the learner receives the possibly corrupted observation. Each run probes the changed mechanic and then probes recovery after the original mechanic returns. A third diagnostic keeps the original mechanic unchanged while injecting the same noise, measuring false change detections. This controlled benchmark isolates one state/action transition; it does not measure generalization across states.
 
+Run the repeated noisy change-point stress test:
+
+```bash
+python run_repeated_change_sweep.py
+```
+
+Compare the default consecutive-contradiction detector with an optional sequential CUSUM detector:
+
+```bash
+python run_detector_comparison.py
+```
+
+The CUSUM detector accumulates log-likelihood evidence from contradictions and reduces that evidence when an observation matches the active model. The comparison evaluates 20 fixed seeds, four observation-noise rates, repeated mechanic switches, and long stable periods. It compares the default consecutive threshold of 3 with CUSUM thresholds 3.5, 5.0, and 6.5. CUSUM's stable/changed contradiction probabilities (0.25 and 0.80) are explicit assumptions, not calibrated probabilities. The default detector remains consecutive; CUSUM is experimental until results justify changing that default.
+
 ## What it learns
 
 The toy world is a small grid with walls, a goal, and a hidden tile mechanic. The agent isn't told the mechanic's rule. It observes state, acts, observes the result, and updates a transition model.
